@@ -1,7 +1,12 @@
 # precompute_features.py
+import sys
+from pathlib import Path
+
+# Ensure project root is on sys.path regardless of where the script is invoked from
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
 from ml.dataset import extract_features
 import librosa
 from config import SAMPLE_RATE
