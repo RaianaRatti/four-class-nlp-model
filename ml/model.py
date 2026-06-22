@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-INPUT_DIM   = 121  # from dataset.py/extract_features() -> input vector of 121 expected
+INPUT_DIM   = 127  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + f0_mean
 HIDDEN_DIM  = 256
 NUM_CLASSES = 4    # from dataset.py -> four classes (silence, speech, overlap, vocalization)
 
@@ -9,7 +9,7 @@ class VADNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(INPUT_DIM, HIDDEN_DIM), # 121 -> 256
+            nn.Linear(INPUT_DIM, HIDDEN_DIM), # 127 -> 256
             nn.LayerNorm(HIDDEN_DIM),
             nn.ReLU(),
             nn.Dropout(0.3),
