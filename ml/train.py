@@ -73,7 +73,7 @@ def train():
 
     # [silence, speech, overlap, vocalization]
     # silence heavily upweighted — it was the worst performer at 15.1%
-    weights   = torch.tensor([4.0, 1.0, 2.5, 2.0]).to(device)
+    weights   = torch.tensor([2.0, 1.0, 2.5, 2.0]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
