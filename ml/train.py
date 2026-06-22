@@ -1,4 +1,5 @@
 import sys
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
@@ -63,23 +64,23 @@ def train():
     model = VADNet().to(device)
 
     # [silence, speech, overlap, vocalization]
-    # overlap and vocalization are rarer so upweighted
-    weights   = torch.tensor([1.0, 1.0, 2.0, 2.0]).to(device)
+    # silence heavily upweighted — it was the worst performer at 15.1%
+    weights   = torch.tensor([4.0, 1.0, 2.5, 2.0]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
 
-    best_val_loss = float("inf")
-    start_epoch   = 0
+    best_bal_acc = 0.0
+    start_epoch  = 0
 
     # Resume from checkpoint if available
     if Path(CHECKPOINT_PATH).exists():
         ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
         model.load_state_dict(ckpt["model"])
         optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch   = ckpt["epoch"] + 1
-        best_val_loss = ckpt["best_val_loss"]
-        print(f"Resumed from epoch {start_epoch} (best val loss: {best_val_loss:.4f})")
+        start_epoch  = ckpt["epoch"] + 1
+        best_bal_acc = ckpt.get("best_bal_acc", 0.0)
+        print(f"Resumed from epoch {start_epoch} (best bal_acc: {best_bal_acc:.1f}%)")
     else:
         print("No checkpoint found — starting from scratch")
 
@@ -93,7 +94,14 @@ def train():
         for features, labels in train_loader:
             features, labels = features.to(device), labels.to(device)
             optimizer.zero_grad()
-            loss = criterion(model(features), labels)
+
+            # Mixup: blend pairs of samples; forces smoother decision boundaries
+            lam     = float(np.random.beta(0.2, 0.2))
+            idx     = torch.randperm(features.size(0), device=device)
+            mixed   = lam * features + (1 - lam) * features[idx]
+            logits  = model(mixed)
+            loss    = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[idx])
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
@@ -101,7 +109,7 @@ def train():
 
         # ── Validation ──────────────────────────────────────────────────────
         model.eval()
-        val_loss = 0.0
+        val_loss      = 0.0
         class_correct = torch.zeros(4, device=device)
         class_total   = torch.zeros(4, device=device)
 
@@ -120,8 +128,10 @@ def train():
         avg_train = train_loss / len(train_loader)
         avg_val   = val_loss   / len(val_loader)
         overall   = class_correct.sum() / class_total.sum() * 100
+        # Mean per-class recall — penalises ignoring any single class
+        bal_acc   = (class_correct / class_total.clamp(min=1)).mean().item() * 100
 
-        print(f"\nEpoch {epoch+1:02d}/{EPOCHS} | train={avg_train:.4f} | val={avg_val:.4f} | acc={overall:.1f}%")
+        print(f"\nEpoch {epoch+1:02d}/{EPOCHS} | train={avg_train:.4f} | val={avg_val:.4f} | acc={overall:.1f}% | bal_acc={bal_acc:.1f}%")
         for c in range(4):
             if class_total[c] > 0:
                 pct = class_correct[c] / class_total[c] * 100
@@ -132,18 +142,18 @@ def train():
         # ── Save latest checkpoint every epoch ──────────────────────────────
         Path(CHECKPOINT_PATH).parent.mkdir(exist_ok=True)
         torch.save({
-            "epoch":         epoch,
-            "model":         model.state_dict(),
-            "optimizer":     optimizer.state_dict(),
-            "best_val_loss": best_val_loss,
+            "epoch":        epoch,
+            "model":        model.state_dict(),
+            "optimizer":    optimizer.state_dict(),
+            "best_bal_acc": best_bal_acc,
         }, CHECKPOINT_PATH)
 
-        # ── Save best model ──────────────────────────────────────────────────
-        if avg_val < best_val_loss:
-            best_val_loss = avg_val
+        # ── Save best model on balanced accuracy, not val loss ───────────────
+        if bal_acc > best_bal_acc:
+            best_bal_acc = bal_acc
             Path(MODEL_OUT).parent.mkdir(exist_ok=True)
             torch.save(model.state_dict(), MODEL_OUT)
-            print(f"  ✓ saved best model → {MODEL_OUT}")
+            print(f"  ✓ saved best model → {MODEL_OUT}  (bal_acc={bal_acc:.1f}%)")
 
     print("\nTraining complete.")
 
