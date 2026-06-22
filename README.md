@@ -1,6 +1,6 @@
 # VADNet — 4-Class Voice Activity Detector
 
-A custom-trained voice activity detection model that classifies audio frames into four classes: **silence**, **speech**, **overlap**, and **vocalization**. Built with PyTorch and trained on a ~627K sample dataset drawn from LibriSpeech, AMI, and ESC-50.
+A custom-trained voice activity detection model that classifies audio frames into four classes: **silence**, **speech**, **overlap**, and **vocalization**. Built with PyTorch and trained on a ~50K sample dataset drawn from LibriSpeech, AMI, and ESC-50.
 
 ---
 
@@ -15,7 +15,7 @@ Most off-the-shelf VAD models output a binary signal (speech / no speech). This 
 | `overlap` | Two or more speakers talking simultaneously |
 | `vocalization` | Non-speech vocal sounds (laughter, coughs, etc.) |
 
-Distinguishing overlap from clean speech is particularly important for diarization — sending overlapping audio to a speaker encoder produces unreliable embeddings, so overlap frames are handled separately downstream.
+Distinguishing overlap from clean speech is particularly important for diarization as sending overlapping audio to a speaker encoder produces unreliable embeddings, so overlap frames are handled separately downstream.
 
 ---
 
@@ -28,7 +28,7 @@ Distinguishing overlap from clean speech is particularly important for diarizati
 - Output: 4-class logits (softmax at inference)
 - Framework: PyTorch
 
-The model is intentionally small — it needs to run in real time alongside audio capture, VAD, speaker encoding, and clustering without becoming a bottleneck.
+The model is intentionally small as it needs to run in real time alongside audio capture, VAD, speaker encoding, and clustering without becoming a bottleneck.
 
 ---
 
@@ -42,7 +42,7 @@ Training data was drawn from three sources and merged into a single `all_labels.
 | [AMI Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) | Meeting recordings | `speech`, `overlap` |
 | [ESC-50](https://github.com/karolpiczak/ESC-50) | Environmental sounds | `vocalization`, `silence` |
 
-Total samples after labeling and merging: ~627K. Features were precomputed to `.npy` files before training to avoid repeated extraction overhead.
+Total samples after labeling and merging: ~50K. Features were precomputed to `.npy` files before training to avoid repeated extraction overhead.
 
 ### Label scripts
 
@@ -77,7 +77,7 @@ This writes `preprocessed_features/features.npy` and `preprocessed_features/labe
 python train.py
 ```
 
-Training runs for 30 epochs with an 85/15 train/val split. The best checkpoint (by validation loss) is saved to `models/custom_vad.pt`. A rolling `models/checkpoint_latest.pt` is also saved every epoch to support resumption if training is interrupted.
+Training runs for 30 epochs with an 85/15 train/val split. The best checkpoint (by validation loss) is saved to `models/custom_vad.pt`.
 
 ### Key hyperparameters
 
@@ -92,10 +92,6 @@ Training runs for 30 epochs with an 85/15 train/val split. The best checkpoint (
 | Gradient clipping | max norm 1.0 |
 
 Class weights upweight `overlap` and `vocalization` since they are underrepresented in the training data. The validation set is kept augmentation-free to give a clean loss signal.
-
-### Best checkpoint
-
-The best model was saved at **epoch 13** with balanced class weights. Earlier training runs used imbalanced weights (`[0.5, 1.0, 2.0, 2.0]`) which caused silence to be over-suppressed at inference — this was corrected in the final training run.
 
 ---
 

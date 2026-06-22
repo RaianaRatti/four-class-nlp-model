@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
 from pathlib import Path
 from ml.dataset import VADDataset
 from ml.model import VADNet
@@ -11,7 +11,7 @@ LABEL_CSV       = "train_data/labels/all_labels.csv"
 AUDIO_DIR       = "train_data/audio"
 MODEL_OUT       = "models/custom_vad.pt"
 CHECKPOINT_PATH = "models/checkpoint_latest.pt"
-EPOCHS          = 30
+EPOCHS          = 60
 BATCH_SIZE      = 256
 LR              = 1e-3
 VAL_SPLIT       = 0.15
@@ -31,10 +31,18 @@ def make_split_loaders(features_path, labels_path, val_split, batch_size):
 
     num_workers = 0 if sys.platform == "darwin" else 2
 
+    # Balanced sampler: weight each sample inversely by its class frequency so
+    # every batch sees ~equal class representation despite the 10x silence/overlap skew
+    train_labels  = full_train.labels[train_idx]
+    class_counts  = np.bincount(train_labels)
+    class_weights = 1.0 / class_counts.astype(np.float32)
+    sample_weights = class_weights[train_labels]
+    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_idx), replacement=True)
+
     train_loader = DataLoader(
         Subset(full_train, train_idx),
         batch_size=batch_size,
-        shuffle=True,
+        sampler=sampler,
         num_workers=num_workers,
         pin_memory=True,
     )
