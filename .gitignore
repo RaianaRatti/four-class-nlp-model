@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+
+train_data/
+models/
+preprocessed_features/
