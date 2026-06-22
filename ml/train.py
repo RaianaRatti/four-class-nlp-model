@@ -73,14 +73,19 @@ def train():
     best_bal_acc = 0.0
     start_epoch  = 0
 
-    # Resume from checkpoint if available
+    # Resume from checkpoint if available and run is incomplete
     if Path(CHECKPOINT_PATH).exists():
-        ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
-        model.load_state_dict(ckpt["model"])
-        optimizer.load_state_dict(ckpt["optimizer"])
-        start_epoch  = ckpt["epoch"] + 1
-        best_bal_acc = ckpt.get("best_bal_acc", 0.0)
-        print(f"Resumed from epoch {start_epoch} (best bal_acc: {best_bal_acc:.1f}%)")
+        ckpt        = torch.load(CHECKPOINT_PATH, map_location=device)
+        start_epoch = ckpt["epoch"] + 1
+        if start_epoch >= EPOCHS:
+            print(f"Checkpoint is from a completed run (epoch {ckpt['epoch']}) — starting fresh")
+            Path(CHECKPOINT_PATH).unlink()
+            start_epoch = 0
+        else:
+            model.load_state_dict(ckpt["model"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+            best_bal_acc = ckpt.get("best_bal_acc", 0.0)
+            print(f"Resumed from epoch {start_epoch} (best bal_acc: {best_bal_acc:.1f}%)")
     else:
         print("No checkpoint found — starting from scratch")
 
