@@ -64,7 +64,7 @@ def train():
     model = VADNet().to(device)
 
     # [silence, speech, overlap, vocalization]
-    weights   = torch.tensor([1.0, 1.0, 1.3, 1.2]).to_device#0.88, 0.55, 1.47, 1.10]).to(device)
+    weights   = torch.tensor([1.0, 1.0, 1.3, 1.2]).to(device) #0.88, 0.55, 1.47, 1.10]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
