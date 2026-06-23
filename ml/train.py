@@ -73,7 +73,7 @@ def train():
 
     # [silence, speech, overlap, vocalization]
     # silence heavily upweighted — it was the worst performer at 15.1%
-    weights   = torch.tensor([2.0, 1.0, 2.5, 2.0]).to(device)
+    weights   = torch.tensor([1.5, 2.0, 3.0, 2.5]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
@@ -109,11 +109,11 @@ def train():
             optimizer.zero_grad()
 
             # Mixup: blend pairs of samples; forces smoother decision boundaries
-            lam     = float(np.random.beta(0.2, 0.2))
-            idx     = torch.randperm(features.size(0), device=device)
-            mixed   = lam * features + (1 - lam) * features[idx]
-            logits  = model(mixed)
-            loss    = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[idx])
+            lam = max(float(np.random.beta(0.1, 0.1)), 0.7)
+            idx = torch.randperm(features.size(0), device=device)
+            mixed = lam * features + (1 - lam) * features[idx]
+            logits = model(mixed)
+            loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[idx])
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)

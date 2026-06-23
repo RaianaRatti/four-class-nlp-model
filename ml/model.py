@@ -1,32 +1,52 @@
 import torch.nn as nn
 
-INPUT_DIM   = 127  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + f0_mean
-HIDDEN_DIM  = 256
+INPUT_DIM   = 129  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + f0_mean + spectral_entropy + harmonic_ratio
+HIDDEN_DIM  = 512
 NUM_CLASSES = 4    # from dataset.py -> four classes (silence, speech, overlap, vocalization)
+
+
+class ResBlock(nn.Module):
+    def __init__(self, dim, dropout=0.3):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim, dim),
+            nn.LayerNorm(dim),
+        )
+        self.act = nn.GELU()
+
+    def forward(self, x):
+        return self.act(x + self.block(x))
 
 
 class VADNet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(INPUT_DIM, HIDDEN_DIM), # 127 -> 256
+        self.input_proj = nn.Sequential(
+            nn.Linear(INPUT_DIM, HIDDEN_DIM),
             nn.LayerNorm(HIDDEN_DIM),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Dropout(0.3),
-
-            nn.Linear(HIDDEN_DIM, HIDDEN_DIM),
-            nn.LayerNorm(HIDDEN_DIM),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-
-            nn.Linear(HIDDEN_DIM, 128),
-            nn.ReLU(),
-
-            nn.Linear(128, NUM_CLASSES)
+        )
+        self.res_blocks = nn.Sequential(
+            ResBlock(HIDDEN_DIM, dropout=0.3),
+            ResBlock(HIDDEN_DIM, dropout=0.3),
+        )
+        self.head = nn.Sequential(
+            nn.Linear(HIDDEN_DIM, 256),
+            nn.LayerNorm(256),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(256, NUM_CLASSES),
         )
 
     def forward(self, x):
-        return self.net(x)  # raw logits, shape (batch, 4)
+        x = self.input_proj(x)
+        x = self.res_blocks(x)
+        return self.head(x)  # raw logits, shape (batch, 4)
     
 '''
 

@@ -32,6 +32,18 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     voiced_frac  = np.array([voiced.mean()])
     f0_mean      = np.array([f0[voiced].mean() / sr if voiced.any() else 0.0])
 
+    # Overlap-discriminative features: two simultaneous speakers create more
+    # chaotic spectra (higher entropy) and weaker harmonicity than a single voice
+    power_spec      = np.abs(librosa.stft(frame, n_fft=480, hop_length=160)) ** 2
+    power_spec_norm = power_spec / (power_spec.sum(axis=0, keepdims=True) + 1e-8)
+    spectral_entropy = np.array([
+        -np.sum(power_spec_norm * np.log(power_spec_norm + 1e-8), axis=0).mean()
+    ])
+    harmonicity    = librosa.effects.harmonic(frame)
+    harmonic_ratio = np.array([
+        np.sum(harmonicity ** 2) / (np.sum(frame ** 2) + 1e-8)
+    ])
+
     features = np.concatenate([
         mfcc.mean(axis=1),        # 40
         delta.mean(axis=1),       # 40
@@ -43,14 +55,16 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
         spectral_rolloff,         # 1
         voiced_frac,              # 1
         f0_mean,                  # 1
-    ])                            # total: 127
+        spectral_entropy,         # 1
+        harmonic_ratio,           # 1
+    ])                            # total: 129
 
     return features.astype(np.float32)
 
 class VADDataset(Dataset):
     def __init__(self, features_npy: str, labels_npy: str, augment: bool = False):
         """Load precomputed features instead of extracting on-the-fly"""
-        self.features = np.load(features_npy).astype(np.float32)  # (N, 127)
+        self.features = np.load(features_npy).astype(np.float32)  # (N, 129)
         self.labels_str = np.load(labels_npy, allow_pickle=True)   # (N,)
         self.labels = np.array([LABEL_MAP[l] for l in self.labels_str])
         self.augment = augment
