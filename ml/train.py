@@ -2,7 +2,7 @@ import sys
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, Subset, WeightedRandomSampler
+from torch.utils.data import DataLoader, Subset
 from pathlib import Path
 from ml.dataset import VADDataset
 from ml.model import VADNet
@@ -31,18 +31,10 @@ def make_split_loaders(features_path, labels_path, val_split, batch_size):
 
     num_workers = 0 if sys.platform == "darwin" else 2
 
-    # Balanced sampler: weight each sample inversely by its class frequency so
-    # every batch sees ~equal class representation despite the 10x silence/overlap skew
-    train_labels  = full_train.labels[train_idx]
-    class_counts  = np.bincount(train_labels)
-    class_weights = 1.0 / class_counts.astype(np.float32)
-    sample_weights = class_weights[train_labels]
-    sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_idx), replacement=True)
-
     train_loader = DataLoader(
         Subset(full_train, train_idx),
         batch_size=batch_size,
-        sampler=sampler,
+        shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
     )
@@ -72,8 +64,7 @@ def train():
     model = VADNet().to(device)
 
     # [silence, speech, overlap, vocalization]
-    # silence heavily upweighted — it was the worst performer at 15.1%
-    weights   = torch.tensor([1.5, 2.0, 3.0, 2.5]).to(device)
+    weights   = torch.tensor([0.88, 0.55, 1.47, 1.10]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)

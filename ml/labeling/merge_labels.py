@@ -11,6 +11,14 @@ INPUT_CSVS = [
 
 OUTPUT_CSV = "train_data/labels/all_labels.csv"
 
+# Target class distribution for training
+TARGET_FRACTIONS = {
+    "silence":       0.25,
+    "speech":        0.40,
+    "overlap":       0.20,
+    "vocalization":  0.15,
+}
+
 def run():
     dfs = []
     for csv_path in INPUT_CSVS:
@@ -22,9 +30,27 @@ def run():
         print(f"{p.name}: {len(df)} rows - {df['label'].value_counts().to_dict()}")
         dfs.append(df)
 
-    combined = pd.concat(dfs).sample(frac=1, random_state=42).reset_index(drop = True)
+    combined = pd.concat(dfs).reset_index(drop=True)
 
-    print(f"\nFinal combined label counts:")
+    print(f"\nRaw combined label counts:")
+    print(combined["label"].value_counts())
+    print(f"Total: {len(combined)} frames")
+
+    total_target = 50_000
+
+    balanced_parts = []
+    for label, frac in TARGET_FRACTIONS.items():
+        n_target = int(total_target * frac)
+        subset = combined[combined["label"] == label]
+        replace = len(subset) < n_target
+        sampled = subset.sample(n=n_target, replace=replace, random_state=42)
+        balanced_parts.append(sampled)
+        status = "oversampled" if replace else "downsampled"
+        print(f"  {label:<14}: {len(subset):>6} → {n_target} ({status})")
+
+    combined = pd.concat(balanced_parts).sample(frac=1, random_state=42).reset_index(drop=True)
+
+    print(f"\nFinal balanced label counts:")
     print(combined["label"].value_counts())
     print(f"Total: {len(combined)} frames")
 

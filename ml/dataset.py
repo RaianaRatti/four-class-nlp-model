@@ -20,9 +20,9 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
 
     # Discriminative spectral features
     zcr               = np.array([librosa.feature.zero_crossing_rate(frame).mean()])
-    spectral_flatness = np.array([librosa.feature.spectral_flatness(y=frame).mean()])
-    spectral_centroid = np.array([librosa.feature.spectral_centroid(y=frame, sr=sr).mean() / sr])
-    spectral_rolloff  = np.array([librosa.feature.spectral_rolloff(y=frame, sr=sr).mean() / sr])
+    spectral_flatness = np.array([librosa.feature.spectral_flatness(y=frame, n_fft=480, hop_length=160).mean()])
+    spectral_centroid = np.array([librosa.feature.spectral_centroid(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
+    spectral_rolloff  = np.array([librosa.feature.spectral_rolloff(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
 
     # Pitch (F0): voiced_fraction separates speech/vocalization from silence/noise;
     # f0_mean distinguishes vocalization pitch range from normal speech
@@ -39,7 +39,7 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     spectral_entropy = np.array([
         -np.sum(power_spec_norm * np.log(power_spec_norm + 1e-8), axis=0).mean()
     ])
-    harmonicity    = librosa.effects.harmonic(frame)
+    harmonicity    = librosa.effects.harmonic(frame, n_fft=480, hop_length=160)
     harmonic_ratio = np.array([
         np.sum(harmonicity ** 2) / (np.sum(frame ** 2) + 1e-8)
     ])
