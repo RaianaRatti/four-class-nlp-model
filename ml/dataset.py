@@ -24,13 +24,13 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     spectral_centroid = np.array([librosa.feature.spectral_centroid(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
     spectral_rolloff  = np.array([librosa.feature.spectral_rolloff(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
 
-    # Pitch (F0): voiced_fraction separates speech/vocalization from silence/noise;
-    # f0_mean distinguishes vocalization pitch range from normal speech
-    f0           = librosa.yin(frame, fmin=75, fmax=400, sr=sr,
-                               frame_length=480, hop_length=160)
-    voiced       = f0 < 400                                          # yin returns fmax when unvoiced
-    voiced_frac  = np.array([voiced.mean()])
-    f0_mean      = np.array([f0[voiced].mean() / sr if voiced.any() else 0.0])
+    # voiced_frac separates speech/vocalization from silence/noise
+    # f0_mean removed — LibriSpeech has low-variance read-speech F0 that causes
+    # live conversational speech to be misclassified as vocalization
+    f0          = librosa.yin(frame, fmin=75, fmax=400, sr=sr,
+                              frame_length=480, hop_length=160)
+    voiced      = f0 < 400                                           # yin returns fmax when unvoiced
+    voiced_frac = np.array([voiced.mean()])
 
     # Overlap-discriminative features: two simultaneous speakers create more
     # chaotic spectra (higher entropy) and weaker harmonicity than a single voice
@@ -54,27 +54,34 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
         spectral_centroid,        # 1
         spectral_rolloff,         # 1
         voiced_frac,              # 1
-        f0_mean,                  # 1
         spectral_entropy,         # 1
         harmonic_ratio,           # 1
-    ])                            # total: 129
+    ])                            # total: 128
 
     return features.astype(np.float32)
 
 class VADDataset(Dataset):
-    def __init__(self, features_npy: str, labels_npy: str, augment: bool = False):
+    def __init__(self, features_npy: str, labels_npy: str, augment: bool = False,
+                 mean_npy: str = "preprocessed_features/mean.npy",
+                 std_npy: str  = "preprocessed_features/std.npy"):
         """Load precomputed features instead of extracting on-the-fly"""
         self.features = np.load(features_npy).astype(np.float32)  # (N, 129)
         self.labels_str = np.load(labels_npy, allow_pickle=True)   # (N,)
         self.labels = np.array([LABEL_MAP[l] for l in self.labels_str])
         self.augment = augment
+        if Path(mean_npy).exists() and Path(std_npy).exists():
+            self.mean = np.load(mean_npy).astype(np.float32)
+            self.std  = np.load(std_npy).astype(np.float32)
+        else:
+            self.mean = self.features.mean(axis=0)
+            self.std  = self.features.std(axis=0) + 1e-8
 
     def _augment(self, features: np.ndarray) -> np.ndarray:
         # Feature vector layout:
         #   [0:40]   MFCC means        ← frequency axis
         #   [40:80]  delta means       ← 1st-order temporal dynamics
         #   [80:120] delta2 means      ← 2nd-order temporal dynamics
-        #   [120:]   energy, ZCR, flatness, centroid, rolloff, voiced_frac, f0_mean
+        #   [120:]   energy, ZCR, flatness, centroid, rolloff, voiced_frac, spectral_entropy, harmonic_ratio
 
         features = features.copy()
 
@@ -109,7 +116,7 @@ class VADDataset(Dataset):
         return len(self.features)
 
     def __getitem__(self, idx):
-        features = self.features[idx].copy()
+        features = (self.features[idx] - self.mean) / self.std
         if self.augment:
             features = self._augment(features)
         label = self.labels[idx]

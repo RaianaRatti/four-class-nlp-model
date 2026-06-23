@@ -49,4 +49,10 @@ labels_array = np.array(labels_list, dtype=str)
 np.save(f"{OUTPUT_DIR}/features.npy", features_array)
 np.save(f"{OUTPUT_DIR}/labels.npy", labels_array)
 
+mean = features_array.mean(axis=0)
+std  = features_array.std(axis=0) + 1e-8
+np.save(f"{OUTPUT_DIR}/mean.npy", mean)
+np.save(f"{OUTPUT_DIR}/std.npy", std)
+
 print(f"✓ Saved {len(features_list)} features")
+print(f"✓ Saved normalization stats (mean/std)")

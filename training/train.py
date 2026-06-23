@@ -1,9 +1,12 @@
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
-from pathlib import Path
 from ml.dataset import VADDataset
 from ml.model import VADNet
 
@@ -64,7 +67,7 @@ def train():
     model = VADNet().to(device)
 
     # [silence, speech, overlap, vocalization]
-    weights   = torch.tensor([1.0, 1.0, 1.3, 1.2]).to(device) #0.88, 0.55, 1.47, 1.10]).to(device)
+    weights   = torch.tensor([1.0, 1.0, 1.3, 1.2]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)

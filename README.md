@@ -1,147 +1,222 @@
-# VADNet — 4-Class Voice Activity Detector
+# VADNet: Four-Class Conversational Audio Classifier
 
-A custom-trained voice activity detection model that classifies audio frames into four classes: **silence**, **speech**, **overlap**, and **vocalization**. Built with PyTorch and trained on a ~50K sample dataset drawn from LibriSpeech, AMI, and ESC-50.
+A lightweight PyTorch model that classifies short audio frames into four conversational categories: **silence**, **speech**, **overlap**, and **vocalization**. Built from scratch as part of a real-time speaker diarization pipeline.
 
 ---
 
-## Why four classes?
+## What It Does
 
-Most off-the-shelf VAD models output a binary signal (speech / no speech). This model was built to support a real-time speaker diarization pipeline that needs finer-grained awareness:
+Most voice activity detectors (VADs) answer a single binary question: *is someone speaking?* VADNet goes further, distinguishing between:
 
 | Class | Description |
 |---|---|
-| `silence` | No audio activity |
-| `speech` | Single speaker |
+| `silence` | No speech activity, background noise, pauses |
+| `speech` | A single speaker talking |
 | `overlap` | Two or more speakers talking simultaneously |
-| `vocalization` | Non-speech vocal sounds (laughter, coughs, etc.) |
+| `vocalization` | Non-linguistic sounds, laughter, coughing, breathing |
 
-Distinguishing overlap from clean speech is particularly important for diarization as sending overlapping audio to a speaker encoder produces unreliable embeddings, so overlap frames are handled separately downstream.
+This richer labeling feeds directly into a diarization pipeline, where knowing *when* speakers overlap is as important as knowing *who* is speaking.
+
+---
+
+## Results
+
+### Final Model (Run C)
+
+```
+Overall accuracy:   83.4%
+Balanced accuracy:  82.4%
+
+Per-class accuracy:
+  Silence        93.7%
+  Speech         83.5%
+  Overlap        73.8%
+  Vocalization   78.7%
+```
+
+Balanced accuracy is reported alongside overall accuracy to penalise models that ignore minority classes. A model that predicts "speech" for everything would score ~40% on overall accuracy but near 25% balanced. This distinction was tracked throughout training.
+
+### Experiment History
+
+| Run | Key Change | Balanced Accuracy |
+|---|---|---|
+| A | Baseline, equal class weights | 75.7% |
+| B | WeightedRandomSampler + weight tuning | 82.0% |
+| C | Gradient clipping, label smoothing, mixup | 82.4% |
 
 ---
 
 ## Architecture
 
-`VADNet` is a lightweight convolutional classifier that operates on log-mel spectrogram features.
+`VADNet` is a feedforward neural network operating on 127-dimensional feature vectors extracted from 30ms audio frames.
 
-- Input: log-mel spectrogram frames (extracted with `torchaudio`)
-- Backbone: stacked Conv1D + BatchNorm + ReLU blocks
-- Output: 4-class logits (softmax at inference)
-- Framework: PyTorch
+```
+Input (127)
+    │
+    ▼
+Linear(127 → 256) → LayerNorm → ReLU → Dropout(0.3)
+    │
+    ▼
+Linear(256 → 256) → LayerNorm → ReLU → Dropout(0.3)
+    │
+    ▼
+Linear(256 → 128) → ReLU
+    │
+    ▼
+Linear(128 → 4)   ← raw logits
+```
 
-The model is intentionally small as it needs to run in real time alongside audio capture, VAD, speaker encoding, and clustering without becoming a bottleneck.
+Roughly 100K parameters, small enough to run in real time on CPU as part of a live pipeline.
 
 ---
 
-## Dataset
+## Features (127-dim vector per frame)
 
-Training data was drawn from three sources and merged into a single `all_labels.csv`:
+Each audio frame is converted to a fixed-length feature vector before training or inference:
 
-| Source | Content | Contribution |
+| Feature | Dim | Purpose |
 |---|---|---|
-| [LibriSpeech](https://www.openslr.org/12) | Clean read speech | `silence`, `speech` |
-| [AMI Corpus](https://groups.inf.ed.ac.uk/ami/corpus/) | Meeting recordings | `speech`, `overlap` |
-| [ESC-50](https://github.com/karolpiczak/ESC-50) | Environmental sounds | `vocalization`, `silence` |
+| MFCC means | 40 | Timbral/spectral content |
+| MFCC delta means | 40 | First-order temporal dynamics |
+| MFCC delta-delta means | 40 | Second-order temporal dynamics |
+| Log energy | 1 | Frame loudness |
+| Zero-crossing rate | 1 | Noisiness / unvoiced content |
+| Spectral flatness | 1 | Tonal vs. noise-like signal |
+| Spectral centroid | 1 | Perceived brightness |
+| Spectral rolloff | 1 | Energy distribution |
+| Voiced fraction | 1 | Proportion of voiced frames |
+| F0 mean | 1 | Fundamental frequency (pitch) |
 
-Total samples after labeling and merging: ~50K. Features were precomputed to `.npy` files before training to avoid repeated extraction overhead.
-
-### Label scripts
-
-- `label_librispeech.py`
-- `label_ami.py`
-- `label_esc50.py`
-- `merge_labels.py` — combines outputs into `all_labels.csv`
-
----
-
-## Training
-
-### Requirements
-
-```
-torch
-torchaudio
-numpy
-```
-
-### Precompute features
-
-```bash
-python precompute_features.py
-```
-
-This writes `preprocessed_features/features.npy` and `preprocessed_features/labels.npy`.
-
-### Run training
-
-```bash
-python train.py
-```
-
-Training runs for 30 epochs with an 85/15 train/val split. The best checkpoint (by validation loss) is saved to `models/custom_vad.pt`.
-
-### Key hyperparameters
-
-| Parameter | Value |
-|---|---|
-| Epochs | 30 |
-| Batch size | 256 |
-| Learning rate | 1e-3 (Adam) |
-| LR scheduler | ReduceLROnPlateau (patience=3, factor=0.5) |
-| Class weights | `[1.0, 1.0, 2.0, 2.0]` |
-| Label smoothing | 0.05 |
-| Gradient clipping | max norm 1.0 |
-
-Class weights upweight `overlap` and `vocalization` since they are underrepresented in the training data. The validation set is kept augmentation-free to give a clean loss signal.
+Pitch features (`voiced_frac`, `f0_mean`) were key for separating vocalization from speech, as laughter and non-speech sounds occupy a different F0 range than conversational speech.
 
 ---
 
-## Inference
+## Training Details
+
+### Dataset
+
+Training data was sourced and labelled from three corpora:
+
+- **LibriSpeech** — clean read speech (`speech`)
+- **AMI Meeting Corpus** — multi-speaker meetings (`speech`, `overlap`)
+- **ESC-50** — environmental sounds and vocalizations (`silence`, `vocalization`)
+
+Labels were assigned per frame using energy thresholds and speaker turn annotations. Final dataset: ~50K labelled frames after capping per-source contribution to avoid skew.
+
+### Class Imbalance Strategy
+
+The raw dataset was heavily skewed toward speech and silence. Two strategies were combined:
+
+1. **WeightedRandomSampler** — each training batch is resampled so every class appears roughly equally, regardless of dataset frequency
+2. **Class-weighted cross-entropy loss** — minority classes (overlap, vocalization) incur higher loss penalties when misclassified
 
 ```python
-import torch
-from ml.model import VADNet
-
-CLASS_NAMES = ["silence", "speech", "overlap", "vocalization"]
-
-model = VADNet()
-model.load_state_dict(torch.load("models/custom_vad.pt", map_location="cpu"))
-model.eval()
-
-with torch.no_grad():
-    logits = model(features)          # features: your log-mel tensor
-    label  = logits.argmax(dim=1)
-    print(CLASS_NAMES[label.item()])
+# Loss weights: [silence, speech, overlap, vocalization]
+weights = torch.tensor([1.0, 1.0, 1.3, 1.2])
+criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
 ```
+
+### Data Augmentation
+
+Applied to training frames only (never validation):
+
+| Augmentation | Probability | Purpose |
+|---|---|---|
+| Gaussian noise | 50% | Microphone/environment variation |
+| MFCC frequency masking | 50% | SpecAugment-style frequency dropout |
+| Delta block zeroing | 30% | SpecAugment-style time masking |
+| Delta-delta masking | 20% | Second-order dropout |
+| Volume scale jitter | 40% | Recording level variation |
+
+### Other Training Choices
+
+- **Mixup** (beta=0.2): blends pairs of training samples to smooth decision boundaries
+- **Gradient clipping** (max norm=1.0): prevents loss spikes during early training
+- **ReduceLROnPlateau** scheduler: halves LR after 3 epochs without validation improvement
+- **Best checkpoint** saved on balanced accuracy, not validation loss, ensuring the saved model performs well across all classes and not just the majority
 
 ---
 
-## Repo structure
+## Project Structure
 
 ```
-.
+voice-detection/
 ├── ml/
-│   ├── model.py          # VADNet architecture
-│   └── dataset.py        # VADDataset (loads .npy features, optional augmentation)
-├── train_data/
-│   ├── audio/            # raw audio files
-│   └── labels/
-│       └── all_labels.csv
-├── preprocessed_features/
-│   ├── features.npy
-│   └── labels.npy
+│   ├── dataset.py          # VADDataset, feature extraction
+│   ├── model.py            # VADNet architecture
+│   └── labeling/
+│       ├── label_librispeech.py
+│       ├── label_ami.py
+│       ├── label_esc50.py
+│       └── merge_labels.py
+├── training/
+│   ├── train.py            # Training loop with checkpointing
+│   └── evaluate.py         # Per-class evaluation on held-out set
+├── config.py               # Shared constants (SAMPLE_RATE, paths)
 ├── models/
-│   ├── custom_vad.pt          # best model weights
-│   └── checkpoint_latest.pt   # rolling checkpoint for resumption
-├── label_librispeech.py
-├── label_ami.py
-├── label_esc50.py
-├── merge_labels.py
-├── precompute_features.py
-└── train.py
+│   └── custom_vad.pt       # Best saved checkpoint
+└── preprocessed_features/
+    ├── features.npy        # Precomputed 127-dim feature vectors
+    └── labels.npy          # Corresponding string labels
 ```
+
+Features are precomputed and saved to `.npy` files before training. This avoids re-extracting 50K frames on every epoch and speeds up the training loop significantly.
 
 ---
 
-## Context
+## Running It
 
-VADNet was built as a component of a larger real-time speaker diarization system. The diarization pipeline feeds VADNet's output into a class-aware state machine that routes audio frames to different downstream handlers — clean speech frames go to speaker encoding and clustering, overlap frames trigger speech separation (SepFormer), and silence/vocalization frames are used to manage segment boundaries.
+### Prerequisites
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install torch librosa numpy pandas
+```
+
+### Creating Training Data
+
+```bash
+python ml/labeling/label_librispeech.py
+python ml/labeling/label_ami.py
+python ml/labeling/label_esc50.py
+python ml/labeling/merge_labels.py
+```
+
+### Precompute Features
+
+```bash
+python training/precompute_features.py
+```
+
+### Train
+
+```bash
+python training/train.py
+```
+
+Training automatically saves a checkpoint after every epoch and resumes from it if interrupted. The best model (by balanced accuracy) is saved to `models/custom_vad.pt`.
+
+### Evaluate
+
+```bash
+python training/evaluate.py
+```
+
+Reports overall accuracy and per-class accuracy on a held-out validation split.
+
+---
+
+## Future Work
+
+- [ ] Add a confusion matrix to evaluate class-level confusion patterns (e.g. overlap misclassified as speech)
+- [ ] Experiment with a sliding-window LSTM or Transformer to capture temporal context across frames
+- [ ] Add spectral entropy and harmonic ratio features to better discriminate overlap
+- [ ] Build an audio demo: drop in a `.wav` file and visualise a timeline of predicted classes
+- [ ] Upload best checkpoint to Hugging Face Hub for reproducibility
+
+---
+
+## Repository
+
+[github.com/RaianaRatti/voice_detection](https://github.com/RaianaRatti/voice_detection)

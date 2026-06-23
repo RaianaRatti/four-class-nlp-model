@@ -1,7 +1,13 @@
-import argparse
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+import argparse
+
+import matplotlib.pyplot as plt
 import torch
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 from torch.utils.data import DataLoader, random_split
 
 from ml.dataset import VADDataset
@@ -97,6 +103,8 @@ def main() -> None:
 
     total_correct = 0
     total_samples = 0
+    all_preds  = []
+    all_labels = []
 
     with torch.no_grad():
         for features, labels in loader:
@@ -118,6 +126,9 @@ def main() -> None:
                 )
 
             preds = logits.argmax(dim=1)
+
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(labels.cpu().tolist())
 
             total_correct += (preds == labels).sum().item()
             total_samples += labels.size(0)
@@ -144,6 +155,13 @@ def main() -> None:
             f"{accuracy:6.2f}% "
             f"({class_correct[cls_idx]}/{class_total[cls_idx]})"
         )
+
+    cm = confusion_matrix(all_labels, all_preds)
+    disp = ConfusionMatrixDisplay(cm, display_labels=LABEL_NAMES)
+    disp.plot(colorbar=False)
+    plt.tight_layout()
+    plt.savefig("confusion_matrix.png", dpi=150)
+    print("✓ Saved confusion_matrix.png")
 
 
 if __name__ == "__main__":

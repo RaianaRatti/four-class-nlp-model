@@ -15,10 +15,16 @@ ESC50_AUDIO_DIR = "train_data/audio/ESC-50-master/audio"
 ESC50_CSV       = "train_data/audio/ESC-50-master/meta/esc50.csv"
 OUTPUT_CSV      = "train_data/labels/esc50_labels.csv"
 
-# map ESC-50 category names to your VAD label names
+# Human vocalizations only — sounds that are non-speech but produced by the body.
+# Excluded: crowd, engine, music, helicopter — these spectrally overlap with
+# noisy/reverberant speech and would teach the model "noisy audio = vocalization".
 CATEGORY_MAP = {
-    "laughing":  "vocalization",
-    "coughing":  "vocalization",
+    "laughing":    "vocalization",
+    "coughing":    "vocalization",
+    "breathing":   "vocalization",
+    "sneezing":    "vocalization",
+    "crying_baby": "vocalization",
+    "snoring":     "vocalization",
 }
 
 # FUNCTIONS
@@ -37,7 +43,7 @@ def extract_frames(wav_path: Path) -> list[np.ndarray]:
 
 
 def run():
-    max_clips = 50
+    max_clips = 240  # 40 clips × 6 categories — use all available
     df_meta = pd.read_csv(ESC50_CSV)
 
     # only keeps categories we care about 

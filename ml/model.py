@@ -1,6 +1,6 @@
 import torch.nn as nn
 
-INPUT_DIM   = 129  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + f0_mean + spectral_entropy + harmonic_ratio
+INPUT_DIM   = 128  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + spectral_entropy + harmonic_ratio
 HIDDEN_DIM  = 512
 NUM_CLASSES = 4    # from dataset.py -> four classes (silence, speech, overlap, vocalization)
 
