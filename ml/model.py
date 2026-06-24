@@ -1,8 +1,11 @@
+import torch
 import torch.nn as nn
 
-INPUT_DIM   = 128  # 40 MFCC + 40 delta + 40 delta2 + energy + ZCR + flatness + centroid + rolloff + voiced_frac + spectral_entropy + harmonic_ratio
+INPUT_DIM   = 128
 HIDDEN_DIM  = 512
-NUM_CLASSES = 4    # from dataset.py -> four classes (silence, speech, overlap, vocalization)
+LSTM_HIDDEN = 128
+CONTEXT_FRAMES = 7   # how many frames of history the model sees (7 × 30ms = 210ms)
+NUM_CLASSES = 4
 
 
 class ResBlock(nn.Module):
@@ -25,6 +28,8 @@ class ResBlock(nn.Module):
 class VADNet(nn.Module):
     def __init__(self):
         super().__init__()
+
+        # Same frame-level feature extractor as before
         self.input_proj = nn.Sequential(
             nn.Linear(INPUT_DIM, HIDDEN_DIM),
             nn.LayerNorm(HIDDEN_DIM),
@@ -35,18 +40,51 @@ class VADNet(nn.Module):
             ResBlock(HIDDEN_DIM, dropout=0.3),
             ResBlock(HIDDEN_DIM, dropout=0.3),
         )
+
+        # NEW: LSTM reads a sequence of frame embeddings and outputs
+        # a context-aware representation for each frame
+        self.lstm = nn.LSTM(
+            input_size=HIDDEN_DIM,
+            hidden_size=LSTM_HIDDEN,
+            num_layers=1,
+            batch_first=True,        # expects (batch, seq_len, features)
+            bidirectional=False,     # causal — only looks at past frames
+        )
+
         self.head = nn.Sequential(
-            nn.Linear(HIDDEN_DIM, 256),
-            nn.LayerNorm(256),
+            nn.Linear(LSTM_HIDDEN, 64),
+            nn.LayerNorm(64),
             nn.GELU(),
             nn.Dropout(0.2),
-            nn.Linear(256, NUM_CLASSES),
+            nn.Linear(64, NUM_CLASSES),
         )
 
     def forward(self, x):
+        # x shape: (batch, seq_len, INPUT_DIM) during training
+        #          (batch, INPUT_DIM) during single-frame inference — handled below
+
+        single_frame = x.ndim == 2
+        if single_frame:
+            x = x.unsqueeze(1)          # (batch, 1, INPUT_DIM)
+
+        batch, seq_len, _ = x.shape
+
+        # Apply frame-level encoder to every frame in the sequence
+        x = x.view(batch * seq_len, INPUT_DIM)
         x = self.input_proj(x)
         x = self.res_blocks(x)
-        return self.head(x)  # raw logits, shape (batch, 4)
+        x = x.view(batch, seq_len, HIDDEN_DIM)
+
+        # LSTM over the sequence
+        x, _ = self.lstm(x)             # (batch, seq_len, LSTM_HIDDEN)
+
+        # Classify each frame using its context-aware representation
+        x = self.head(x)                # (batch, seq_len, NUM_CLASSES)
+
+        if single_frame:
+            x = x.squeeze(1)            # back to (batch, NUM_CLASSES)
+
+        return x
     
 '''
 

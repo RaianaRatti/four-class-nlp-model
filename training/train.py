@@ -107,7 +107,8 @@ def train():
             idx = torch.randperm(features.size(0), device=device)
             mixed = lam * features + (1 - lam) * features[idx]
             logits = model(mixed)
-            loss = lam * criterion(logits, labels) + (1 - lam) * criterion(logits, labels[idx])
+            logits_last = logits[:, -1, :] # only classify the final frame in each sequences
+            loss = lam * criterion(logits_last, labels) + (1 - lam) * criterion(logits_last, labels[idx])
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -123,9 +124,10 @@ def train():
         with torch.no_grad():
             for features, labels in val_loader:
                 features, labels = features.to(device), labels.to(device)
-                logits    = model(features)
+                logits = model(features)
+                logits = logits[:, -1, :]
                 val_loss += criterion(logits, labels).item()
-                preds     = logits.argmax(dim=1)
+                preds  = logits.argmax(dim=1)
 
                 for c in range(4):
                     mask = labels == c

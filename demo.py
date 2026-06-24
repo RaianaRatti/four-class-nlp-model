@@ -7,11 +7,11 @@ import numpy as np
 import librosa
 import torch
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
+import collections
 
 from ml.model import VADNet
 from ml.dataset import extract_features
-from config import SAMPLE_RATE
+from config import CONTEXT_FRAMES
 
 # Class colors for visualization
 CLASS_COLORS = {
@@ -70,33 +70,44 @@ def run_inference(audio_path, model, device, sample_rate,
     frame_times = []
     
     print(f"Processing {len(y) / sample_rate:.2f}s of audio ({len(y)} samples)...")
+
+    context = collections.deque(
+        [np.zeros(128, dtype=np.float32)] * CONTEXT_FRAMES,
+        maxlen=CONTEXT_FRAMES
+    )
     
     with torch.no_grad():
         for start in range(0, len(y) - frame_length, hop_length):
             frame = y[start:start + frame_length]
 
-            # Short-circuit near-silent frames — zero/near-zero audio produces
-            # degenerate feature vectors that the model misclassifies as vocalization
             if np.sqrt(np.mean(frame ** 2)) < 0.001:
+                context.append(np.zeros(128, dtype=np.float32))
                 predictions.append(0)
                 confidences.append(np.array([1.0, 0.0, 0.0, 0.0]))
                 frame_times.append(start / sample_rate)
                 continue
 
-            # Extract and normalize features (must match training normalization)
             features = (extract_features(frame, sr=sample_rate) - mean) / std
-            features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
+            context.append(features)
 
-            # Inference
-            logits = model(features_tensor)
-            probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
-            pred = logits.argmax(dim=1).item()
+            # Stack context window into sequence tensor
+            seq = np.stack(list(context))                              # (CONTEXT_FRAMES, 128)
+            seq_tensor = torch.tensor(seq).unsqueeze(0).to(device)    # (1, CONTEXT_FRAMES, 128)
+
+            logits = model(seq_tensor)    # (1, CONTEXT_FRAMES, NUM_CLASSES)
+            last   = logits[0, -1, :]     # classify the current frame
+            probs  = torch.softmax(last, dim=0).cpu().numpy()
+            pred   = last.argmax().item()
 
             predictions.append(pred)
             confidences.append(probs)
             frame_times.append(start / sample_rate)
-    
-    return np.array(predictions), np.array(confidences), np.array(frame_times)
+
+        return (
+            np.array(predictions),
+            np.array(confidences),
+            np.array(frame_times),
+        )
 
 
 def print_predictions(predictions, confidences, frame_times, class_names):
@@ -213,7 +224,7 @@ def main():
     
     # Set output path
     if args.output is None:
-        output_dir = Path("test_results")
+        output_dir = Path("testing/test_results")
         output_dir.mkdir(exist_ok=True)
 
         args.output = str(

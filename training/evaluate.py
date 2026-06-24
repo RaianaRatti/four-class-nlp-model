@@ -113,6 +113,9 @@ def main() -> None:
 
             logits = model(features)
 
+            if logits.ndim == 3:
+                logits = logits[:, -1, :]
+
             if logits.ndim == 1:
                 raise ValueError(
                     "Model output must have shape (batch, num_classes)"
