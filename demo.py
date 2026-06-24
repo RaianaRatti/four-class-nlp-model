@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# Use: python demo.py {filename}
 import argparse
 import sys
 from pathlib import Path
@@ -74,16 +74,24 @@ def run_inference(audio_path, model, device, sample_rate,
     with torch.no_grad():
         for start in range(0, len(y) - frame_length, hop_length):
             frame = y[start:start + frame_length]
-            
+
+            # Short-circuit near-silent frames — zero/near-zero audio produces
+            # degenerate feature vectors that the model misclassifies as vocalization
+            if np.sqrt(np.mean(frame ** 2)) < 0.001:
+                predictions.append(0)
+                confidences.append(np.array([1.0, 0.0, 0.0, 0.0]))
+                frame_times.append(start / sample_rate)
+                continue
+
             # Extract and normalize features (must match training normalization)
             features = (extract_features(frame, sr=sample_rate) - mean) / std
             features_tensor = torch.tensor(features, dtype=torch.float32).unsqueeze(0).to(device)
-            
+
             # Inference
             logits = model(features_tensor)
             probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
             pred = logits.argmax(dim=1).item()
-            
+
             predictions.append(pred)
             confidences.append(probs)
             frame_times.append(start / sample_rate)

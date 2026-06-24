@@ -70,6 +70,31 @@ def make_rows(filename: str, frame_labels: list[tuple]) -> list[dict]:
     ]
 
 
+def add_synthetic_silence_rows(all_rows: list, count: int) -> None:
+    """Emit truly silent and near-zero frames the model never sees from LibriSpeech."""
+    aug_dir   = Path("train_data/audio/librispeech_flat_aug")
+    aug_dir.mkdir(parents=True, exist_ok=True)
+    per_type  = count // 2
+    n_samples = (per_type + 1) * FRAME_SIZE
+
+    variants = [
+        ("synthetic_silence.wav",   np.zeros(n_samples, dtype=np.float32)),
+        ("synthetic_near_zero.wav", (np.random.randn(n_samples) * 0.0003).astype(np.float32)),
+    ]
+    for name, audio in variants:
+        path = aug_dir / name
+        if not path.exists():
+            sf.write(str(path), audio, SAMPLE_RATE)
+        csv_filename = f"librispeech_flat_aug/{name}"
+        for i in range(per_type):
+            all_rows.append({
+                "filename": csv_filename,
+                "start_ms": i * FRAME_MS,
+                "end_ms":   i * FRAME_MS + FRAME_MS,
+                "label":    "silence",
+            })
+
+
 def run():
     wav_files = list(Path(LIBRISPEECH_DIR).glob("*.wav"))
 
@@ -98,6 +123,11 @@ def run():
             if not aug_path.exists():
                 sf.write(str(aug_path), aug_audio, SAMPLE_RATE)
             all_rows.extend(make_rows(csv_filename, frame_labels))
+
+    # Inject synthetic zero/near-zero silence frames (25% of current speech count)
+    # so the model learns what truly silent audio looks like
+    speech_count_raw = sum(1 for r in all_rows if r["label"] == "speech")
+    add_synthetic_silence_rows(all_rows, speech_count_raw // 4)
 
     Path(OUTPUT_CSV).parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(all_rows)

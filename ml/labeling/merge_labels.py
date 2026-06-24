@@ -6,7 +6,6 @@ from pathlib import Path
 INPUT_CSVS = [
     "train_data/labels/librispeech_labels.csv",
     "train_data/labels/ami_labels.csv",
-    "train_data/labels/esc50_labels.csv"
 ]
 
 OUTPUT_CSV = "train_data/labels/all_labels.csv"

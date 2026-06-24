@@ -2,8 +2,5 @@
 __pycache__/
 *.pyc
 
-train_data/
-test_data/
-test_results/
-models/
-preprocessed_features/
+training/train_data/
+testing/
