@@ -13,7 +13,7 @@ Most voice activity detectors (VADs) answer a single binary question: *is someon
 | `silence` | No speech activity, background noise, pauses |
 | `speech` | A single speaker talking |
 | `overlap` | Two or more speakers talking simultaneously |
-| `vocalization` | Non-linguistic sounds, laughter, coughing, breathing |
+| `vocalization` | Non-linguistic sounds: laughter, coughing, sneezing |
 
 This richer labeling feeds directly into a diarization pipeline, where knowing *when* speakers overlap is as important as knowing *who* is speaking.
 
@@ -21,20 +21,35 @@ This richer labeling feeds directly into a diarization pipeline, where knowing *
 
 ## Results
 
-### Final Model (Run C)
+### Evaluation on Held-Out Set
 
 ```
-Overall accuracy:   83.4%
-Balanced accuracy:  82.4%
+Overall accuracy:   96.34%
 
 Per-class accuracy:
-  Silence        93.7%
-  Speech         83.5%
-  Overlap        73.8%
-  Vocalization   78.7%
+  Silence        92.65%  (1753/1892)
+  Speech         96.79%  (2866/2961)
+  Overlap        98.05%  (1406/1434)
+  Vocalization   99.13%  (1143/1153)
 ```
 
-Balanced accuracy is reported alongside overall accuracy to penalise models that ignore minority classes. A model that predicts "speech" for everything would score ~40% on overall accuracy but near 25% balanced. This distinction was tracked throughout training.
+### Best Training Epoch (51/60)
+
+```
+Balanced accuracy:  92.5%
+
+Per-class accuracy:
+  Silence        89.3%
+  Speech         93.3%
+  Overlap        92.8%
+  Vocalization   94.5%
+```
+
+Balanced accuracy is reported alongside overall accuracy to penalise models that ignore minority classes. A model that predicts "speech" for everything would score ~40% on overall accuracy but near 25% balanced.
+
+### Confusion Matrix
+
+![Confusion Matrix](confusion_matrix.png)
 
 ### Experiment History
 
@@ -43,34 +58,35 @@ Balanced accuracy is reported alongside overall accuracy to penalise models that
 | A | Baseline, equal class weights | 75.7% |
 | B | WeightedRandomSampler + weight tuning | 82.0% |
 | C | Gradient clipping, label smoothing, mixup | 82.4% |
+| D | ResBlock architecture, normalization, energy gate, fixed AMI labeling | 92.5% |
 
 ---
 
 ## Architecture
 
-`VADNet` is a feedforward neural network operating on 127-dimensional feature vectors extracted from 30ms audio frames.
+`VADNet` is a feedforward neural network with residual blocks, operating on 128-dimensional feature vectors extracted from 30ms audio frames.
 
 ```
-Input (127)
-    │
-    ▼
-Linear(127 → 256) → LayerNorm → ReLU → Dropout(0.3)
-    │
-    ▼
-Linear(256 → 256) → LayerNorm → ReLU → Dropout(0.3)
-    │
-    ▼
-Linear(256 → 128) → ReLU
-    │
-    ▼
-Linear(128 → 4)   ← raw logits
+Input (128)
+    |
+    v
+Linear(128 -> 512) -> LayerNorm -> GELU -> Dropout(0.3)
+    |
+    v
+ResBlock(512) -> ResBlock(512)
+    |
+    v
+Linear(512 -> 256) -> LayerNorm -> GELU -> Dropout(0.2)
+    |
+    v
+Linear(256 -> 4)   <- raw logits
 ```
 
-Roughly 100K parameters, small enough to run in real time on CPU as part of a live pipeline.
+Each `ResBlock` is: `Linear -> LayerNorm -> GELU -> Dropout -> Linear -> LayerNorm` with a residual skip connection.
 
 ---
 
-## Features (127-dim vector per frame)
+## Features (128-dim vector per frame)
 
 Each audio frame is converted to a fixed-length feature vector before training or inference:
 
@@ -84,10 +100,11 @@ Each audio frame is converted to a fixed-length feature vector before training o
 | Spectral flatness | 1 | Tonal vs. noise-like signal |
 | Spectral centroid | 1 | Perceived brightness |
 | Spectral rolloff | 1 | Energy distribution |
-| Voiced fraction | 1 | Proportion of voiced frames |
-| F0 mean | 1 | Fundamental frequency (pitch) |
+| Voiced fraction | 1 | Proportion of voiced frames (F0 < 400Hz) |
+| Spectral entropy | 1 | Chaos in spectrum, high during overlap |
+| Harmonic ratio | 1 | Ratio of harmonic to total energy, low during overlap |
 
-Pitch features (`voiced_frac`, `f0_mean`) were key for separating vocalization from speech, as laughter and non-speech sounds occupy a different F0 range than conversational speech.
+Feature vectors are normalized using mean and std computed from the training set, saved to `preprocessed_features/mean.npy` and `preprocessed_features/std.npy` and applied consistently at both train and inference time.
 
 ---
 
@@ -95,20 +112,19 @@ Pitch features (`voiced_frac`, `f0_mean`) were key for separating vocalization f
 
 ### Dataset
 
-Training data was sourced and labelled from three corpora:
+- **LibriSpeech** (`train-clean-100`) — clean read speech, labeled `speech` and `silence`. Augmented with additive noise, MP3 compression simulation, and reverb. Synthetic silence frames (pure zeros and very-low-amplitude noise) generated programmatically to cover truly silent audio.
+- **AMI Meeting Corpus** — multi-speaker meeting room recordings, labeled `speech`, `overlap`, `silence`, and `vocalization`. Overlap detected by counting distinct active speakers per frame using per-speaker word-level annotations.
 
-- **LibriSpeech** — clean read speech (`speech`)
-- **AMI Meeting Corpus** — multi-speaker meetings (`speech`, `overlap`)
-- **ESC-50** — environmental sounds and vocalizations (`silence`, `vocalization`)
+### Inference Energy Gate
 
-Labels were assigned per frame using energy thresholds and speaker turn annotations. Final dataset: ~50K labelled frames after capping per-source contribution to avoid skew.
+- Frames with RMS below 0.001 are hard-assigned to `silence` before feature extraction
+- Zero and near-zero audio produces degenerate feature vectors that the model cannot reliably classify
+- Bypassing the model for these frames eliminates a systematic failure mode at no accuracy cost
 
 ### Class Imbalance Strategy
 
-The raw dataset was heavily skewed toward speech and silence. Two strategies were combined:
-
-1. **WeightedRandomSampler** — each training batch is resampled so every class appears roughly equally, regardless of dataset frequency
-2. **Class-weighted cross-entropy loss** — minority classes (overlap, vocalization) incur higher loss penalties when misclassified
+- **WeightedRandomSampler** resamples each training batch so every class appears roughly equally
+- **Class-weighted cross-entropy** applies higher loss penalties to minority class misclassifications
 
 ```python
 # Loss weights: [silence, speech, overlap, vocalization]
@@ -130,37 +146,58 @@ Applied to training frames only (never validation):
 
 ### Other Training Choices
 
-- **Mixup** (beta=0.2): blends pairs of training samples to smooth decision boundaries
+- **Mixup** (beta=0.1): blends pairs of training samples to smooth decision boundaries
 - **Gradient clipping** (max norm=1.0): prevents loss spikes during early training
 - **ReduceLROnPlateau** scheduler: halves LR after 3 epochs without validation improvement
-- **Best checkpoint** saved on balanced accuracy, not validation loss, ensuring the saved model performs well across all classes and not just the majority
+- **Best checkpoint** saved on balanced accuracy, not validation loss
+
+---
+
+## Key Design Decisions
+
+- `f0_mean` removed as a feature: LibriSpeech's narrow F0 distribution caused real-world conversational speech to be misclassified as vocalization. `voiced_frac` retained as it is more robust to this distribution shift.
+- `spectral_entropy` and `harmonic_ratio` added specifically to improve overlap discrimination, as two simultaneous speakers produce more chaotic spectra and weaker harmonicity than a single voice.
+- ESC-50 removed entirely: too many spectrally ambiguous categories (breathing, crowd noise, ambient sounds) bleed into silence and speech feature space. Vocalization training data now comes from AMI vocalsound annotations only (laughter, coughing, sneezing).
+- AMI overlap labeling uses per-speaker binary masks before summing across speakers. The naive approach of summing all word events into one counter caused adjacent speaker turns to falsely trigger overlap at boundaries.
+- A 20ms shrink is applied to AMI word boundaries to prevent bleed between consecutive words from different speakers.
+- Sliding window LSTM considered and rejected: the added complexity of sequence batching and stateful inference in the real-time pipeline was not justified at this accuracy level.
 
 ---
 
 ## Project Structure
 
 ```
-voice-detection/
+four-class-nlp-model/
 ├── ml/
-│   ├── dataset.py          # VADDataset, feature extraction
-│   ├── model.py            # VADNet architecture
-│   └── labeling/
-│       ├── label_librispeech.py
-│       ├── label_ami.py
-│       ├── label_esc50.py
-│       └── merge_labels.py
-├── training/
-│   ├── train.py            # Training loop with checkpointing
-│   └── evaluate.py         # Per-class evaluation on held-out set
-├── config.py               # Shared constants (SAMPLE_RATE, paths)
+│   ├── labeling/
+│   │   ├── label_librispeech.py    # Speech + synthetic silence frames
+│   │   ├── label_ami.py            # Speech, overlap, silence, vocalization from AMI
+│   │   └── merge_labels.py         # Combines CSVs, balances class counts
+│   ├── dataset.py                  # VADDataset, feature extraction
+│   └── model.py                    # VADNet architecture
 ├── models/
-│   └── custom_vad.pt       # Best saved checkpoint
-└── preprocessed_features/
-    ├── features.npy        # Precomputed 127-dim feature vectors
-    └── labels.npy          # Corresponding string labels
+│   └── custom_vad.pt               # Best saved checkpoint
+├── preprocessed_features/
+│   ├── features.npy                # Precomputed 128-dim feature vectors
+│   ├── labels.npy                  # Corresponding string labels
+│   ├── mean.npy                    # Per-feature training mean
+│   └── std.npy                     # Per-feature training std
+├── testing/
+│   ├── test_data/                  # Audio files for manual testing
+│   ├── test_results/               # Visualization outputs
+│   ├── frame_divider.py            # Splits audio into frames for inspection
+│   └── record_audio.py             # Records audio from microphone for testing
+├── training/
+│   ├── train_data/                 # Raw labeled audio
+│   ├── evaluate.py                 # Per-class evaluation + confusion matrix
+│   ├── precompute_features.py      # Extracts and saves features + mean/std
+│   ├── train.py                    # Training loop with checkpointing
+│   ├── training_model.ipynb        # Colab notebook for GPU training
+│   └── upload_to_hf.py             # Uploads preprocessed features to Hugging Face
+├── config.py                       # Shared constants (SAMPLE_RATE, FRAME_MS)
+├── confusion_matrix.png            # Latest evaluation confusion matrix
+└── demo.py                         # Run inference on any audio file
 ```
-
-Features are precomputed and saved to `.npy` files before training. This avoids re-extracting 50K frames on every epoch and speeds up the training loop significantly.
 
 ---
 
@@ -171,7 +208,7 @@ Features are precomputed and saved to `.npy` files before training. This avoids 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install torch librosa numpy pandas
+pip install torch librosa numpy pandas tqdm soundfile scipy
 ```
 
 ### Creating Training Data
@@ -179,7 +216,6 @@ pip install torch librosa numpy pandas
 ```bash
 python ml/labeling/label_librispeech.py
 python ml/labeling/label_ami.py
-python ml/labeling/label_esc50.py
 python ml/labeling/merge_labels.py
 ```
 
@@ -189,13 +225,16 @@ python ml/labeling/merge_labels.py
 python training/precompute_features.py
 ```
 
+Saves `features.npy`, `labels.npy`, `mean.npy`, and `std.npy` to `preprocessed_features/`.
+
 ### Train
 
 ```bash
+rm -f models/checkpoint_latest.pt models/custom_vad.pt
 python training/train.py
 ```
 
-Training automatically saves a checkpoint after every epoch and resumes from it if interrupted. The best model (by balanced accuracy) is saved to `models/custom_vad.pt`.
+Training saves a checkpoint after every epoch and resumes from it if interrupted. The best model by balanced accuracy is saved to `models/custom_vad.pt`.
 
 ### Evaluate
 
@@ -203,17 +242,15 @@ Training automatically saves a checkpoint after every epoch and resumes from it 
 python training/evaluate.py
 ```
 
-Reports overall accuracy and per-class accuracy on a held-out validation split.
+Reports overall accuracy, per-class accuracy, and saves a confusion matrix to `confusion_matrix.png`.
 
----
+### Demo
 
-## Future Work
+```bash
+python demo.py test_data/your_audio.wav
+```
 
-- [ ] Add a confusion matrix to evaluate class-level confusion patterns (e.g. overlap misclassified as speech)
-- [ ] Experiment with a sliding-window LSTM or Transformer to capture temporal context across frames
-- [ ] Add spectral entropy and harmonic ratio features to better discriminate overlap
-- [ ] Build an audio demo: drop in a `.wav` file and visualise a timeline of predicted classes
-- [ ] Upload best checkpoint to Hugging Face Hub for reproducibility
+Runs inference on any audio file and saves a timeline visualization to `testing/test_results/`.
 
 ---
 

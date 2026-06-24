@@ -4,7 +4,7 @@ import librosa
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
-from config import SAMPLE_RATE, CONTEXT_FRAMES
+from config import SAMPLE_RATE
 
 LABEL_MAP = {"silence": 0, "speech": 1, "overlap": 2, "vocalization": 3}
 N_MFCC = 40
@@ -116,19 +116,8 @@ class VADDataset(Dataset):
         return len(self.features)
 
     def __getitem__(self, idx):
-        # Build a context window ending at idx
-        # Frames before the start of the dataset are zero-padded
-        start = idx - CONTEXT_FRAMES + 1
-        frames = []
-        for i in range(start, idx + 1):
-            if i < 0:
-                frames.append(np.zeros(self.features.shape[1], dtype=np.float32))
-            else:
-                f = (self.features[i] - self.mean) / self.std
-                if self.augment:
-                    f = self._augment(f)
-                frames.append(f)
-
-        features_seq = np.stack(frames)              # (CONTEXT_FRAMES, INPUT_DIM)
-        label = self.labels[idx]                     # label for the LAST frame only
-        return torch.tensor(features_seq), torch.tensor(label, dtype=torch.long)
+        features = (self.features[idx] - self.mean) / self.std
+        if self.augment:
+            features = self._augment(features)
+        label = self.labels[idx]
+        return torch.tensor(features), torch.tensor(label, dtype=torch.long)

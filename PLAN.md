@@ -1,133 +1,105 @@
 # Improvement Plan
 
-## Current state (epoch 29/30)
+## Current State
 
-| Class       | Accuracy | Samples | Share  |
-|-------------|----------|---------|--------|
-| silence     | 50.3%    | 2,572   | 5.2%   |
-| speech      | 73.5%    | 8,510   | 17.2%  |
-| overlap     | 93.4%    | 25,000  | 50.5%  |
-| vocalization| 71.7%    | 13,411  | 27.1%  |
-| **overall** | **81.9%**|         |        |
-| **bal_acc** | **72.2%**|         |        |
+| Metric | Value |
+|---|---|
+| Overall accuracy (eval) | 96.34% |
+| Balanced accuracy (best epoch) | 92.5% |
+| Best epoch | 51/60 |
 
-**Root cause of silence at 50.3%:** data imbalance. Silence has 10x fewer
-samples than overlap. Class weights of 4.0 partially compensate but can't
-overcome a 5% vs 51% split — the model sees ~10 overlap frames for every
-silence frame per epoch.
+| Class | Eval Accuracy |
+|---|---|
+| Silence | 92.65% |
+| Speech | 96.79% |
+| Overlap | 98.05% |
+| Vocalization | 99.13% |
 
 ---
 
-## Priority 1 — Balanced batch sampling (no reprecompute, high impact)
+## Completed Work
 
-Replace `shuffle=True` in the train loader with `WeightedRandomSampler`.
-This makes every batch contain roughly equal class representation, regardless
-of dataset size.
+| Fix | File(s) |
+|---|---|
+| Feature normalization (mean/std saved and applied at train + inference) | `precompute_features.py`, `dataset.py`, `demo.py` |
+| Removed `f0_mean` (caused speech to be misclassified as vocalization) | `dataset.py` |
+| Added `spectral_entropy` and `harmonic_ratio` for overlap discrimination | `dataset.py` |
+| Energy gate for near-silent frames at inference | `demo.py` |
+| Synthetic silence rows (zeros + low-amplitude noise) in LibriSpeech labeling | `label_librispeech.py` |
+| ESC-50 removed due to spectral ambiguity | `label_esc50.py` removed |
+| AMI overlap fixed: per-speaker binary masks instead of combined counter | `label_ami.py` |
+| AMI word boundary shrink (20ms) to prevent false overlap at turn edges | `label_ami.py` |
+| Vocalization tightened to laughter, coughing, sneezing only | `label_ami.py` |
+| Confusion matrix added to evaluate | `evaluate.py` |
+| Noise, MP3 compression, reverb augmentation on LibriSpeech frames | `label_librispeech.py` |
+| ResBlock architecture replacing flat MLP | `model.py` |
+| Mixup, gradient clipping, label smoothing | `train.py` |
+| EPOCHS extended to 60 | `train.py` |
+| Sliding window LSTM considered, applied and rejected | N/A |
 
-**Where:** `ml/train.py` → `make_split_loaders()`
+---
+
+## Remaining Priorities
+
+### Priority 1 — Energy gate during vocalization labeling
+
+- 190 vocalization frames in the confusion matrix were predicted as silence
+- These are silent gaps inside AMI vocalsound clips being stamped as vocalization
+- Fix: apply the same RMS threshold used in `demo.py` during labeling
 
 ```python
-from torch.utils.data import WeightedRandomSampler
-
-# Compute per-sample weights inversely proportional to class frequency
-label_counts = np.bincount(full_train.labels[train_idx])
-class_weights = 1.0 / label_counts
-sample_weights = class_weights[full_train.labels[train_idx]]
-sampler = WeightedRandomSampler(sample_weights, num_samples=len(train_idx), replacement=True)
-
-# Pass sampler instead of shuffle=True
-train_loader = DataLoader(..., sampler=sampler, shuffle=False)
+# In label_ami.py when emitting vocalization rows:
+rms = np.sqrt(np.mean(frame ** 2))
+label = "vocalization" if rms >= 0.02 else "silence"
 ```
 
-Expected effect: silence goes from ~5% of each batch to ~25%.
+- Rerun: `label_ami.py` -> `merge_labels.py` -> `precompute_features.py` -> retrain
 
 ---
 
-## Priority 2 — Train longer (no reprecompute, easy)
+### Priority 2 — Add VoxCeleb2 for real-world speech coverage
 
-Silence improved from 15.1% → 50.3% across 30 epochs — it's still on an
-upward curve, not plateaued. Extend training.
+- LibriSpeech is studio-quality audiobook audio
+- Real-world inference audio is conversational, compressed, and noisier
+- VoxCeleb2 contains YouTube interview clips across many speakers, accents, and mic types
+- Add `label_voxceleb.py` following the same pattern as `label_librispeech.py`
+- Target: 10,000 to 15,000 additional speech frames
 
-**Where:** `ml/train.py`
+---
+
+### Priority 3 — Synthesize overlap from speaker pairs
+
+- All overlap currently comes from AMI (one acoustic environment)
+- Mixing two VoxCeleb2 speakers programmatically adds diversity and volume control
 
 ```python
-EPOCHS = 60  # was 30
+overlap_frame = speaker_a * alpha + speaker_b * (1 - alpha)
+# alpha ~ uniform(0.4, 0.6) keeps both speakers audible
 ```
 
-Combined with the balanced sampler, the model will actually see enough silence
-examples to converge.
+- Cleaner and more controllable than extracting more meeting recordings
 
 ---
 
-## Priority 3 — Add more silence training data (reprecompute required)
+### Priority 4 — CNN on mel-spectrogram
 
-2,572 silence samples is too few. Two cheap sources:
-
-1. **Synthetic silence:** generate frames of zeros and very-low-amplitude
-   Gaussian noise (simulating a quiet room). 5,000–10,000 frames takes seconds
-   to create with numpy.
-2. **MUSAN noise corpus** (free, ~11GB): contains music, speech, and noise
-   clips. The noise subset provides realistic ambient/silence-like recordings.
-
-Add generated samples to `train_data/audio/` and entries to `all_labels.csv`,
-then re-run `python training/precompute_features.py`.
-
-Target: bring silence up to at least 8,000–10,000 samples (≥15% of dataset).
+- Current MLP averages MFCC vectors, collapsing temporal structure within each frame
+- A small CNN on a 2D mel-spectrogram patch retains frequency and time patterns
+- Approach: 64 mel bins x 3 time steps per 30ms frame, 2 to 3 conv layers, global avg pool, MLP head
+- Estimated gain: 3 to 6 points on balanced accuracy
+- Requires rewriting `extract_features` and `VADNet`, and re-running precompute
 
 ---
 
-## Priority 4 — Temporal context window (reprecompute required, medium effort)
+### Priority 5 — Pre-trained audio encoder
 
-The model currently sees one 30ms frame in isolation. Many confusions happen
-at boundaries: a single frame of speech surrounded by silence looks ambiguous
-without context. Feeding N consecutive frames gives the model the "before and
-after" it needs.
-
-**Approach:**
-- In `precompute_features.py`, instead of one feature vector per frame, store
-  a sliding window of 5 frames (5 × 127 = 635-dim vector).
-- Update `INPUT_DIM = 635` in `ml/model.py`.
-- No architecture change beyond the input dim.
-
-This particularly helps overlap detection (two voices starting/stopping) and
-silence boundaries.
+- Fine-tune a frozen `wav2vec2-base` or `openai/whisper-tiny` as a feature extractor
+- Train only a small classifier head on top
+- Estimated balanced accuracy: 85 to 90%+
+- Requires GPU and rewriting the feature pipeline to pass raw waveforms
 
 ---
 
-## Priority 5 — CNN on 2D mel-spectrogram (bigger rewrite, highest ceiling)
+## Recommended Next Step
 
-The current MLP operates on averaged MFCC vectors — averaging collapses all
-temporal structure within each frame. A small CNN operating on the 2D
-mel-spectrogram retains spatial/frequency patterns that the MLP cannot see.
-
-**Approach:**
-- Change `extract_features` to return a 2D mel-spectrogram patch (e.g. 64
-  mel bins × 3 time steps for a 30ms frame) instead of a 1D averaged vector.
-- Replace `VADNet` with a small CNN: 2–3 conv layers → global avg pool →
-  2-layer MLP head → 4 classes.
-- Re-run precompute.
-
-Expected gain: 3–6 points on bal_acc. This is the architectural ceiling of
-the "train from scratch" approach.
-
----
-
-## Priority 6 — Pre-trained audio encoder (highest effort, highest ceiling)
-
-Fine-tune a frozen `wav2vec2-base` or `openai/whisper-tiny` encoder as a
-feature extractor, then train only a small classifier head on top. These
-models already understand speech structure deeply.
-
-Expected gain: bal_acc likely jumps to 85–90%+ with minimal additional data.
-Requires GPU and rewriting the feature pipeline to pass raw waveforms instead
-of precomputed features.
-
----
-
-## Recommended order
-
-1. Balanced sampler + EPOCHS=60 — run overnight, free gains
-2. Add silence data (synthetic) + reprecompute — one afternoon of work
-3. Temporal context window — if silence still lags after 1 & 2
-4. CNN architecture — if bal_acc plateaus below 80%
-5. Pre-trained encoder — if target accuracy justifies the complexity
+Run **Priority 1** first. It is a one-afternoon fix with no new data required and directly targets the largest remaining confusion in the matrix.
