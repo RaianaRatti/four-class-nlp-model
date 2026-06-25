@@ -64,25 +64,28 @@ Balanced accuracy is reported alongside overall accuracy to penalise models that
 
 ## Architecture
 
-`VADNet` is a feedforward neural network with residual blocks, operating on 128-dimensional feature vectors extracted from 30ms audio frames.
+`VADNet` classifies each 30ms frame using a context window of 7 frames (210ms of history). Each frame in the window is encoded by a shared residual network, then a causal LSTM reads the sequence and produces a context-aware representation for the final frame.
 
 ```
-Input (128)
+Input: 7 frames x 128 features
     |
-    v
+    v  (applied independently to each frame)
 Linear(128 -> 512) -> LayerNorm -> GELU -> Dropout(0.3)
     |
     v
 ResBlock(512) -> ResBlock(512)
     |
-    v
-Linear(512 -> 256) -> LayerNorm -> GELU -> Dropout(0.2)
+    v  (sequence of 7 frame embeddings)
+LSTM(512 -> 128, causal, 1 layer)
+    |
+    v  (hidden state at final frame)
+Linear(128 -> 64) -> LayerNorm -> GELU -> Dropout(0.2)
     |
     v
-Linear(256 -> 4)   <- raw logits
+Linear(64 -> 4)   <- raw logits
 ```
 
-Each `ResBlock` is: `Linear -> LayerNorm -> GELU -> Dropout -> Linear -> LayerNorm` with a residual skip connection.
+Each `ResBlock` is: `Linear -> LayerNorm -> GELU -> Dropout -> Linear -> LayerNorm` with a residual skip connection. The LSTM is causal (unidirectional), so inference never looks ahead of the current frame.
 
 ---
 
@@ -160,7 +163,7 @@ Applied to training frames only (never validation):
 - ESC-50 removed entirely: too many spectrally ambiguous categories (breathing, crowd noise, ambient sounds) bleed into silence and speech feature space. Vocalization training data now comes from AMI vocalsound annotations only (laughter, coughing, sneezing).
 - AMI overlap labeling uses per-speaker binary masks before summing across speakers. The naive approach of summing all word events into one counter caused adjacent speaker turns to falsely trigger overlap at boundaries.
 - A 20ms shrink is applied to AMI word boundaries to prevent bleed between consecutive words from different speakers.
-- Sliding window LSTM considered and rejected: the added complexity of sequence batching and stateful inference in the real-time pipeline was not justified at this accuracy level.
+- A causal LSTM with a 7-frame context window (210ms) was added to give the model temporal context across frames. The LSTM reads frame embeddings produced by the shared residual encoder and outputs a context-aware representation used for classification. Frames before the start of a sequence are zero-padded. The LSTM is unidirectional so inference remains causal and real-time compatible.
 
 ---
 
@@ -256,4 +259,4 @@ Runs inference on any audio file and saves a timeline visualization to `testing/
 
 ## Repository
 
-[github.com/RaianaRatti/voice_detection](https://github.com/RaianaRatti/voice_detection)
+[github.com/RaianaRatti/four-class-audio-classifier](https://github.com/RaianaRatti/four-class-audio-classifier)
