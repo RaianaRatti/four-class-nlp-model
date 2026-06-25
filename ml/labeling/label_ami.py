@@ -8,9 +8,9 @@ from config import SAMPLE_RATE, FRAME_MS
 
 FRAME_SIZE = int(SAMPLE_RATE * FRAME_MS / 1000)  # 480 samples
 
-AMI_AUDIO_DIR = "train_data/audio/ami/amicorpus"
-AMI_WORDS_DIR = "train_data/audio/ami/ami_public_manual_1.6.2/words"
-OUTPUT_CSV    = "train_data/labels/ami_labels.csv"
+AMI_AUDIO_DIR = "training/train_data/audio/ami/amicorpus"
+AMI_WORDS_DIR = "training/train_data/audio/ami/ami_public_manual_1.6.2/words"
+OUTPUT_CSV    = "training/train_data/labels/ami_labels.csv"
 
 MEETINGS = [
     "ES2008a", "ES2008b", "ES2008c", "ES2008d",
@@ -69,7 +69,7 @@ def label_meeting(meeting_id: str) -> list[dict]:
     Label priority:
         overlap      — 2+ speakers have a word active in this frame
         speech       — exactly 1 speaker has a word active
-        vocalization — 1 speaker has a vocalsound, no words active for anyone
+        non-vocal    — 1 speaker or background has a vocalsound, no words active for anyone
         silence      — nothing active
     """
 
@@ -150,7 +150,7 @@ def label_meeting(meeting_id: str) -> list[dict]:
         elif sc == 1:
             label = "speech"
         elif vc >= 1:
-            label = "vocalization"
+            label = "non-vocal"
         else:
             label = "silence"
 
@@ -189,11 +189,11 @@ def run():
         "silence":       3_000,
         "speech":        8_000,
         "overlap":       8_000,   # capped to match speech
-        "vocalization":  3_000,
+        "non-vocal":     3_000,
     }
 
     balanced_parts = []
-    for label in ["silence", "speech", "overlap", "vocalization"]:
+    for label in ["silence", "speech", "overlap", "non-vocal"]:
         subset = df[df["label"] == label]
         if len(subset) == 0:
             print(f"  WARNING: no rows for label '{label}'")

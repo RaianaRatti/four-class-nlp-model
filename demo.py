@@ -18,10 +18,10 @@ CLASS_COLORS = {
     0: "#1f77b4",  # blue: silence
     1: "#2ca02c",  # green: speech
     2: "#d62728",  # red: overlap
-    3: "#ff7f0e",  # orange: vocalization
+    3: "#ff7f0e",  # orange: non-vocal
 }
 
-CLASS_NAMES = ["silence", "speech", "overlap", "vocalization"]
+CLASS_NAMES = ["silence", "speech", "overlap", "non-vocal"]
 
 
 def load_model(model_path, device):
@@ -79,15 +79,17 @@ def run_inference(audio_path, model, device, sample_rate,
     with torch.no_grad():
         for start in range(0, len(y) - frame_length, hop_length):
             frame = y[start:start + frame_length]
-
-            if np.sqrt(np.mean(frame ** 2)) < 0.001:
+ 
+            if np.sqrt(np.mean(frame ** 2)) < 0.003:
                 context.append(np.zeros(128, dtype=np.float32))
                 predictions.append(0)
                 confidences.append(np.array([1.0, 0.0, 0.0, 0.0]))
-                frame_times.append(start / sample_rate)
                 continue
 
-            features = (extract_features(frame, sr=sample_rate) - mean) / std
+            window = np.hanning(len(frame)).astype(np.float32)
+            frame_windowed = frame * window
+            features = (extract_features(frame_windowed, sr=sample_rate) - mean) / std
+
             context.append(features)
 
             # Stack context window into sequence tensor

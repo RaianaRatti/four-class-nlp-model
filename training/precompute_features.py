@@ -11,8 +11,8 @@ from ml.dataset import extract_features
 import librosa
 from config import SAMPLE_RATE
 
-LABEL_CSV = "train_data/labels/all_labels.csv"
-AUDIO_DIR = "train_data/audio"
+LABEL_CSV = "training/train_data/labels/all_labels.csv"
+AUDIO_DIR = "training/train_data/audio"
 OUTPUT_DIR = "preprocessed_features"
 
 Path(OUTPUT_DIR).mkdir(exist_ok=True)

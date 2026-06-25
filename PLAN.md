@@ -13,7 +13,7 @@
 | Silence | 92.65% |
 | Speech | 96.79% |
 | Overlap | 98.05% |
-| Vocalization | 99.13% |
+| non-vocal | 99.13% |
 
 ---
 
@@ -22,14 +22,14 @@
 | Fix | File(s) |
 |---|---|
 | Feature normalization (mean/std saved and applied at train + inference) | `precompute_features.py`, `dataset.py`, `demo.py` |
-| Removed `f0_mean` (caused speech to be misclassified as vocalization) | `dataset.py` |
+| Removed `f0_mean` (caused speech to be misclassified as non-vocal) | `dataset.py` |
 | Added `spectral_entropy` and `harmonic_ratio` for overlap discrimination | `dataset.py` |
 | Energy gate for near-silent frames at inference | `demo.py` |
 | Synthetic silence rows (zeros + low-amplitude noise) in LibriSpeech labeling | `label_librispeech.py` |
 | ESC-50 removed due to spectral ambiguity | `label_esc50.py` removed |
 | AMI overlap fixed: per-speaker binary masks instead of combined counter | `label_ami.py` |
 | AMI word boundary shrink (20ms) to prevent false overlap at turn edges | `label_ami.py` |
-| Vocalization tightened to laughter, coughing, sneezing only | `label_ami.py` |
+| non-vocal tightened to laughter, coughing, sneezing only | `label_ami.py` |
 | Confusion matrix added to evaluate | `evaluate.py` |
 | Noise, MP3 compression, reverb augmentation on LibriSpeech frames | `label_librispeech.py` |
 | ResBlock architecture replacing flat MLP | `model.py` |
@@ -41,16 +41,16 @@
 
 ## Remaining Priorities
 
-### Priority 1 — Energy gate during vocalization labeling
+### Priority 1 — Energy gate during non-vocal labeling
 
-- 190 vocalization frames in the confusion matrix were predicted as silence
-- These are silent gaps inside AMI vocalsound clips being stamped as vocalization
+- 190 non-vocal frames in the confusion matrix were predicted as silence
+- These are silent gaps inside AMI vocalsound clips being stamped as non-vocal
 - Fix: apply the same RMS threshold used in `demo.py` during labeling
 
 ```python
-# In label_ami.py when emitting vocalization rows:
+# In label_ami.py when emitting non-vocal rows:
 rms = np.sqrt(np.mean(frame ** 2))
-label = "vocalization" if rms >= 0.02 else "silence"
+label = "non-vocal" if rms >= 0.02 else "silence"
 ```
 
 - Rerun: `label_ami.py` -> `merge_labels.py` -> `precompute_features.py` -> retrain

@@ -19,7 +19,7 @@ BATCH_SIZE      = 256
 LR              = 1e-3
 VAL_SPLIT       = 0.15
 
-CLASS_NAMES = ["silence", "speech", "overlap", "vocalization"]
+CLASS_NAMES = ["silence", "speech", "overlap", "non-vocal"]
 
 
 def make_split_loaders(features_path, labels_path, val_split, batch_size):
@@ -66,7 +66,7 @@ def train():
 
     model = VADNet().to(device)
 
-    # [silence, speech, overlap, vocalization]
+    # [silence, speech, overlap, non-vocal]
     weights   = torch.tensor([1.0, 1.0, 1.3, 1.2]).to(device)
     criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)

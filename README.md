@@ -1,6 +1,6 @@
 # VADNet: Four-Class Conversational Audio Classifier
 
-A lightweight PyTorch model that classifies short audio frames into four conversational categories: **silence**, **speech**, **overlap**, and **vocalization**. Built from scratch as part of a real-time speaker diarization pipeline.
+A lightweight PyTorch model that classifies short audio frames into four conversational categories: **silence**, **speech**, **overlap**, and **non-vocal**. Built from scratch as part of a real-time speaker diarization pipeline.
 
 ---
 
@@ -10,10 +10,10 @@ Most voice activity detectors (VADs) answer a single binary question: *is someon
 
 | Class | Description |
 |---|---|
-| `silence` | No speech activity, background noise, pauses |
+| `silence` | No speech activity, pauses |
 | `speech` | A single speaker talking |
 | `overlap` | Two or more speakers talking simultaneously |
-| `vocalization` | Non-linguistic sounds: laughter, coughing, sneezing |
+| `non-vocal` | Non-linguistic sounds: breathing, tapping, etc. |
 
 This richer labeling feeds directly into a diarization pipeline, where knowing *when* speakers overlap is as important as knowing *who* is speaking.
 
@@ -24,14 +24,18 @@ This richer labeling feeds directly into a diarization pipeline, where knowing *
 ### Evaluation on Held-Out Set
 
 ```
-Overall accuracy:   96.34%
+Overall accuracy:   97.37%
 
 Per-class accuracy:
-  Silence        92.65%  (1753/1892)
-  Speech         96.79%  (2866/2961)
-  Overlap        98.05%  (1406/1434)
-  Vocalization   99.13%  (1143/1153)
+  Silence        95.67%  (1810/1892)
+  Speech         97.33%  (2882/2961)
+  Overlap        98.61%  (1414/1434)
+  non-vocal      99.70%  (1138/1153)
 ```
+
+### Confusion Matrix
+
+![Confusion Matrix](confusion_matrix.png)
 
 ### Best Training Epoch (51/60)
 
@@ -42,14 +46,10 @@ Per-class accuracy:
   Silence        89.3%
   Speech         93.3%
   Overlap        92.8%
-  Vocalization   94.5%
+  non-vocal      94.5%
 ```
 
 Balanced accuracy is reported alongside overall accuracy to penalise models that ignore minority classes. A model that predicts "speech" for everything would score ~40% on overall accuracy but near 25% balanced.
-
-### Confusion Matrix
-
-![Confusion Matrix](confusion_matrix.png)
 
 ### Experiment History
 
@@ -116,7 +116,7 @@ Feature vectors are normalized using mean and std computed from the training set
 ### Dataset
 
 - **LibriSpeech** (`train-clean-100`) — clean read speech, labeled `speech` and `silence`. Augmented with additive noise, MP3 compression simulation, and reverb. Synthetic silence frames (pure zeros and very-low-amplitude noise) generated programmatically to cover truly silent audio.
-- **AMI Meeting Corpus** — multi-speaker meeting room recordings, labeled `speech`, `overlap`, `silence`, and `vocalization`. Overlap detected by counting distinct active speakers per frame using per-speaker word-level annotations.
+- **AMI Meeting Corpus** — multi-speaker meeting room recordings, labeled `speech`, `overlap`, `silence`, and `non-vocal`. Overlap detected by counting distinct active speakers per frame using per-speaker word-level annotations.
 
 ### Inference Energy Gate
 
@@ -130,7 +130,7 @@ Feature vectors are normalized using mean and std computed from the training set
 - **Class-weighted cross-entropy** applies higher loss penalties to minority class misclassifications
 
 ```python
-# Loss weights: [silence, speech, overlap, vocalization]
+# Loss weights: [silence, speech, overlap, non-vocal]
 weights = torch.tensor([1.0, 1.0, 1.3, 1.2])
 criterion = nn.CrossEntropyLoss(weight=weights, label_smoothing=0.05)
 ```
@@ -158,9 +158,9 @@ Applied to training frames only (never validation):
 
 ## Key Design Decisions
 
-- `f0_mean` removed as a feature: LibriSpeech's narrow F0 distribution caused real-world conversational speech to be misclassified as vocalization. `voiced_frac` retained as it is more robust to this distribution shift.
+- `f0_mean` removed as a feature: LibriSpeech's narrow F0 distribution caused real-world conversational speech to be misclassified as non-vocal. `voiced_frac` retained as it is more robust to this distribution shift.
 - `spectral_entropy` and `harmonic_ratio` added specifically to improve overlap discrimination, as two simultaneous speakers produce more chaotic spectra and weaker harmonicity than a single voice.
-- ESC-50 removed entirely: too many spectrally ambiguous categories (breathing, crowd noise, ambient sounds) bleed into silence and speech feature space. Vocalization training data now comes from AMI vocalsound annotations only (laughter, coughing, sneezing).
+- ESC-50 removed entirely: too many spectrally ambiguous categories (breathing, crowd noise, ambient sounds) bleed into silence and speech feature space. non-vocal training data now comes from AMI vocalsound annotations only (laughter, coughing, sneezing).
 - AMI overlap labeling uses per-speaker binary masks before summing across speakers. The naive approach of summing all word events into one counter caused adjacent speaker turns to falsely trigger overlap at boundaries.
 - A 20ms shrink is applied to AMI word boundaries to prevent bleed between consecutive words from different speakers.
 - A causal LSTM with a 7-frame context window (210ms) was added to give the model temporal context across frames. The LSTM reads frame embeddings produced by the shared residual encoder and outputs a context-aware representation used for classification. Frames before the start of a sequence are zero-padded. The LSTM is unidirectional so inference remains causal and real-time compatible.
@@ -174,7 +174,7 @@ four-class-nlp-model/
 ├── ml/
 │   ├── labeling/
 │   │   ├── label_librispeech.py    # Speech + synthetic silence frames
-│   │   ├── label_ami.py            # Speech, overlap, silence, vocalization from AMI
+│   │   ├── label_ami.py            # Speech, overlap, silence, non-vocal from AMI
 │   │   └── merge_labels.py         # Combines CSVs, balances class counts
 │   ├── dataset.py                  # VADDataset, feature extraction
 │   └── model.py                    # VADNet architecture
@@ -211,7 +211,7 @@ four-class-nlp-model/
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install torch librosa numpy pandas tqdm soundfile scipy
+pip install torch librosa numpy pandas tqdm soundfile scipy webrtcvad
 ```
 
 ### Creating Training Data

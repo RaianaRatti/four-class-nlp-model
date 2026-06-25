@@ -14,8 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT))
 
 FRAME_SIZE      = int(SAMPLE_RATE * FRAME_MS / 1000)  # 480 samples
-LIBRISPEECH_DIR = "train_data/audio/librispeech_flat"
-OUTPUT_CSV      = "train_data/labels/librispeech_labels.csv"
+LIBRISPEECH_DIR = "training/train_data/audio/librispeech_flat"
+OUTPUT_CSV      = "training/train_data/labels/librispeech_labels.csv"
 
 vad = webrtcvad.Vad(0)  # aggressiveness 0 — good for clean audio
 

@@ -1,17 +1,19 @@
 import numpy as np
-import pandas as pd
 import librosa
 import torch
 from torch.utils.data import Dataset
 from pathlib import Path
 from config import SAMPLE_RATE, CONTEXT_FRAMES
 
-LABEL_MAP = {"silence": 0, "speech": 1, "overlap": 2, "vocalization": 3}
+LABEL_MAP = {"silence": 0, "speech": 1, "overlap": 2, "non-vocal": 3}
 N_MFCC = 40
 
 def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     if frame.dtype != np.float32:
         frame = frame.astype(np.float32) / 32768.0
+
+    window = np.hanning(len(frame)).astype(np.float32)
+    frame = frame * window
 
     mfcc    = librosa.feature.mfcc(y=frame, sr=sr, n_mfcc=N_MFCC, n_fft=480, hop_length=160)
     delta   = librosa.feature.delta(mfcc, mode="nearest")
@@ -24,9 +26,9 @@ def extract_features(frame: np.ndarray, sr: int = SAMPLE_RATE) -> np.ndarray:
     spectral_centroid = np.array([librosa.feature.spectral_centroid(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
     spectral_rolloff  = np.array([librosa.feature.spectral_rolloff(y=frame, sr=sr, n_fft=480, hop_length=160).mean() / sr])
 
-    # voiced_frac separates speech/vocalization from silence/noise
+    # voiced_frac separates speech/non-vocal from silence/noise
     # f0_mean removed — LibriSpeech has low-variance read-speech F0 that causes
-    # live conversational speech to be misclassified as vocalization
+    # live conversational speech to be misclassified as non-vocal
     f0          = librosa.yin(frame, fmin=75, fmax=400, sr=sr,
                               frame_length=480, hop_length=160)
     voiced      = f0 < 400                                           # yin returns fmax when unvoiced

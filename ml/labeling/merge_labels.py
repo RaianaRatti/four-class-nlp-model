@@ -4,18 +4,18 @@ import pandas as pd
 from pathlib import Path
 
 INPUT_CSVS = [
-    "train_data/labels/librispeech_labels.csv",
-    "train_data/labels/ami_labels.csv",
+    "training/train_data/labels/librispeech_labels.csv",
+    "training/train_data/labels/ami_labels.csv",
 ]
 
-OUTPUT_CSV = "train_data/labels/all_labels.csv"
+OUTPUT_CSV = "training/train_data/labels/all_labels.csv"
 
 # Target class distribution for training
 TARGET_FRACTIONS = {
     "silence":       0.25,
     "speech":        0.40,
     "overlap":       0.20,
-    "vocalization":  0.15,
+    "non-vocal":  0.15,
 }
 
 def run():

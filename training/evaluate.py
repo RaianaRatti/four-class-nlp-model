@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, random_split
 from ml.dataset import VADDataset
 from ml.model import VADNet
 
-LABEL_NAMES = ["silence", "speech", "overlap", "vocalization"]
+LABEL_NAMES = ["silence", "speech", "overlap", "non-vocal"]
 
 DEFAULT_MODEL = "models/custom_vad.pt"
 DEFAULT_FEATURES = "preprocessed_features/features.npy"
