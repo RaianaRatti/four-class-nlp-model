@@ -257,6 +257,6 @@ Runs inference on any audio file and saves a timeline visualization to `testing/
 
 ---
 
-## Repository
+## License
 
-[github.com/RaianaRatti/four-class-audio-classifier](https://github.com/RaianaRatti/four-class-audio-classifier)
+MIT
